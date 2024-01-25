@@ -610,7 +610,7 @@ void InsertBatchMcSeqnos::insert_messages_txs(const std::vector<TxMsg>& tx_msgs,
 
 void InsertBatchMcSeqnos::insert_account_states(pqxx::work &transaction, const std::vector<ParsedBlockPtr>& mc_blocks) {
   std::ostringstream query;
-  query << "INSERT INTO account_states (hash, account, balance, account_status, frozen_hash, code_hash, data_hash) VALUES ";
+  query << "INSERT INTO account_states (hash, account, balance, account_status, frozen_hash, code_hash, data_hash, code_boc, data_boc) VALUES ";
   bool is_first = true;
   for (const auto& mc_block : mc_blocks) {
     for (const auto& account_state : mc_block->account_states_) {
@@ -619,6 +619,13 @@ void InsertBatchMcSeqnos::insert_account_states(pqxx::work &transaction, const s
       } else {
         query << ", ";
       }
+
+      auto code_hash_boc_r = convert::to_bytes(account_state.code_hash);
+      auto code_hash_boc = code_hash_boc_r.is_ok() ? code_hash_boc_r.move_as_ok() : td::optional<std::string>{};
+
+      auto data_hash_boc_r = convert::to_bytes(account_state.data_hash);
+      auto data_hash_boc = data_hash_boc_r.is_ok() ? data_hash_boc_r.move_as_ok() : td::optional<std::string>{};
+      
       query << "("
             << TO_SQL_STRING(td::base64_encode(account_state.hash.as_slice())) << ","
             << TO_SQL_STRING(convert::to_raw_address(account_state.account)) << ","
@@ -626,7 +633,9 @@ void InsertBatchMcSeqnos::insert_account_states(pqxx::work &transaction, const s
             << TO_SQL_STRING(account_state.account_status) << ","
             << TO_SQL_OPTIONAL_STRING(account_state.frozen_hash) << ","
             << TO_SQL_OPTIONAL_STRING(account_state.code_hash) << ","
-            << TO_SQL_OPTIONAL_STRING(account_state.data_hash)
+            << TO_SQL_OPTIONAL_STRING(account_state.data_hash) << ","
+            << TO_SQL_OPTIONAL_STRING(code_hash_boc) << ","
+            << TO_SQL_OPTIONAL_STRING(data_hash_boc)
             << ")";
     }
   }
@@ -654,7 +663,7 @@ void InsertBatchMcSeqnos::insert_latest_account_states(pqxx::work &transaction, 
   }
 
   std::ostringstream query;
-  query << "INSERT INTO latest_account_states (account, hash, balance, last_trans_lt, timestamp, account_status, frozen_hash, code_hash, data_hash) VALUES ";
+  query << "INSERT INTO latest_account_states (account, hash, balance, last_trans_lt, timestamp, account_status, frozen_hash, code_hash, data_hash, code_boc, data_boc) VALUES ";
   bool is_first = true;
   for (auto i = latest_account_states.begin(); i != latest_account_states.end(); ++i) {
     auto& account_state = i->second;
@@ -663,6 +672,13 @@ void InsertBatchMcSeqnos::insert_latest_account_states(pqxx::work &transaction, 
     } else {
       query << ", ";
     }
+
+    auto code_hash_boc_r = convert::to_bytes(account_state.code_hash);
+    auto code_hash_boc = code_hash_boc_r.is_ok() ? code_hash_boc_r.move_as_ok() : td::optional<std::string>{};
+
+    auto data_hash_boc_r = convert::to_bytes(account_state.data_hash);
+    auto data_hash_boc = data_hash_boc_r.is_ok() ? data_hash_boc_r.move_as_ok() : td::optional<std::string>{};
+
     query << "("
           << TO_SQL_STRING(convert::to_raw_address(account_state.account)) << ","
           << TO_SQL_STRING(td::base64_encode(account_state.hash.as_slice())) << ","
@@ -686,7 +702,10 @@ void InsertBatchMcSeqnos::insert_latest_account_states(pqxx::work &transaction, 
         << "account_status = EXCLUDED.account_status, "
         << "frozen_hash = EXCLUDED.frozen_hash, "
         << "code_hash = EXCLUDED.code_hash, "
-        << "data_hash = EXCLUDED.data_hash WHERE latest_account_states.last_trans_lt < EXCLUDED.last_trans_lt";
+        << "data_hash = EXCLUDED.data_hash WHERE latest_account_states.last_trans_lt < EXCLUDED.last_trans_lt, "
+        << "code = EXCLUDED.code, ";
+        << "data = EXCLUDED.data WHERE latest_account_states.last_trans_lt < EXCLUDED.last_trans_lt";
+
   // LOG(DEBUG) << "Running SQL query: " << query.str();
   transaction.exec0(query.str());
 }
@@ -829,8 +848,8 @@ public:
       }
       pqxx::work txn(c);
       
-      std::string query = "INSERT INTO jetton_wallets (balance, address, owner, jetton, last_transaction_lt, code_hash, data_hash) "
-                            "VALUES ($1, $2, $3, $4, $5, $6, $7) "
+      std::string query = "INSERT INTO jetton_wallets (balance, address, owner, jetton, last_transaction_lt, code_hash, data_hash, code_boc, data_boc) "
+                            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) "
                             "ON CONFLICT (address) "
                             "DO UPDATE SET "
                             "balance = EXCLUDED.balance, "
@@ -838,8 +857,16 @@ public:
                             "jetton = EXCLUDED.jetton, "
                             "last_transaction_lt = EXCLUDED.last_transaction_lt, "
                             "code_hash = EXCLUDED.code_hash, "
-                            "data_hash = EXCLUDED.data_hash "
+                            "data_hash = EXCLUDED.data_hash, "
+                            "code_boc = EXCLUDED.code_boc, "
+                            "data_boc = EXCLUDED.data_boc "
                             "WHERE jetton_wallets.last_transaction_lt < EXCLUDED.last_transaction_lt;";
+
+      auto code_boc_r = convert::to_bytes(wallet_.code);
+      auto code_boc = code_boc_r.is_ok() ? code_boc_r.move_as_ok() : td::optional<std::string>{};
+
+      auto data_boc_r = convert::to_bytes(wallet_.data);
+      auto data_boc = data_boc_r.is_ok() ? data_boc_r.move_as_ok() : td::optional<std::string>{};
 
       txn.exec_params(query,
                       wallet_.balance,
@@ -848,8 +875,9 @@ public:
                       wallet_.jetton,
                       wallet_.last_transaction_lt,
                       td::base64_encode(wallet_.code_hash.as_slice()),
-                      td::base64_encode(wallet_.data_hash.as_slice()));
-
+                      td::base64_encode(wallet_.data_hash.as_slice()),
+                      code_boc,
+                      data_boc);
 
       txn.commit();
       promise_.set_value(td::Unit());
@@ -885,7 +913,7 @@ public:
       }
       pqxx::work txn(c);
 
-      std::string query = "SELECT balance, address, owner, jetton, last_transaction_lt, code_hash, data_hash "
+      std::string query = "SELECT balance, address, owner, jetton, last_transaction_lt, code_hash, data_hash, code_boc, data_boc "
                           "FROM jetton_wallets "
                           "WHERE address = $1;";
 
@@ -911,6 +939,8 @@ public:
       wallet.last_transaction_lt = row[4].as<uint64_t>();
       wallet.code_hash = vm::CellHash::from_slice(td::base64_decode(row[5].as<std::string>()).move_as_ok());
       wallet.data_hash = vm::CellHash::from_slice(td::base64_decode(row[6].as<std::string>()).move_as_ok());
+      wallet.code_boc = row[7].as<std::string>();
+      wallet.data_boc = row[8].as<std::string>();
 
       txn.commit();
       promise_.set_value(std::move(wallet));
@@ -1202,10 +1232,16 @@ public:
       }
       pqxx::work txn(c);
 
-      std::string query = "INSERT INTO nft_items (address, init, index, collection_address, owner_address, content, last_transaction_lt, code_hash, data_hash) "
-                          "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) "
+      std::string query = "INSERT INTO nft_items (address, init, index, collection_address, owner_address, content, last_transaction_lt, code_hash, data_hash, code_boc, data_boc) "
+                          "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) "
                           "ON CONFLICT (address) DO UPDATE "
-                          "SET init = $2, index = $3, collection_address = $4, owner_address = $5, content = $6, last_transaction_lt = $7, code_hash = $8, data_hash = $9;";
+                          "SET init = $2, index = $3, collection_address = $4, owner_address = $5, content = $6, last_transaction_lt = $7, code_hash = $8, data_hash = $9, code_boc = $10, data_boc = $11;";
+
+      auto code_boc_r = convert::to_bytes(item_data_.code);
+      auto code_boc = code_boc_r.is_ok() ? code_boc_r.move_as_ok() : td::optional<std::string>{};
+
+      auto data_boc_r = convert::to_bytes(item_data_.data);
+      auto data_boc = data_boc_r.is_ok() ? data_boc_r.move_as_ok() : td::optional<std::string>{};
 
       txn.exec_params(query,
                       item_data_.address,
@@ -1216,7 +1252,10 @@ public:
                       item_data_.content ? content_to_json_string(item_data_.content.value()).c_str() : nullptr,
                       item_data_.last_transaction_lt,
                       td::base64_encode(item_data_.code_hash.as_slice().str()),
-                      td::base64_encode(item_data_.data_hash.as_slice().str()));
+                      td::base64_encode(item_data_.data_hash.as_slice().str()),
+                      code_boc,
+                      data_boc);
+
       txn.commit();
       promise_.set_value(td::Unit());
     } catch (const std::exception &e) {
@@ -1251,7 +1290,7 @@ public:
       }
       pqxx::work txn(c);
 
-      std::string query = "SELECT address, init, index, collection_address, owner_address, content, last_transaction_lt, code_hash, data_hash "
+      std::string query = "SELECT address, init, index, collection_address, owner_address, content, last_transaction_lt, code_hash, data_hash, code_boc, data_boc "
                           "FROM nft_items "
                           "WHERE address = $1;";
 
@@ -1280,6 +1319,8 @@ public:
       item_data.last_transaction_lt = row[6].as<uint64_t>();
       item_data.code_hash = vm::CellHash::from_slice(td::base64_decode(row[7].as<std::string>()).move_as_ok());
       item_data.data_hash = vm::CellHash::from_slice(td::base64_decode(row[8].as<std::string>()).move_as_ok());
+      item_data.code_boc = row[9].as<std::string>();
+      item_data.data_boc = row[10].as<std::string>();
 
       promise_.set_value(std::move(item_data));
     } catch (const std::exception &e) {
