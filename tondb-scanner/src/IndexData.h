@@ -268,6 +268,8 @@ struct AccountState {
   td::Ref<vm::Cell> data;
   td::optional<std::string> data_hash;
   uint64_t last_trans_lt;
+  td::optional<std::string> code_boc;
+  td::optional<std::string> data_boc;
 };
 
 }
@@ -294,6 +296,8 @@ struct JettonWalletData {
   uint64_t last_transaction_lt;
   vm::CellHash code_hash;
   vm::CellHash data_hash;
+  std::string code_boc;
+  std::string data_boc;
 };
 
 struct JettonTransfer {
@@ -341,6 +345,8 @@ struct NFTItemData {
   uint64_t last_transaction_lt;
   vm::CellHash code_hash;
   vm::CellHash data_hash;
+  std::string code_boc;
+  std::string data_boc;
 };
 
 struct NFTTransfer {

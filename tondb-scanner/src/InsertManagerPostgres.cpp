@@ -620,11 +620,11 @@ void InsertBatchMcSeqnos::insert_account_states(pqxx::work &transaction, const s
         query << ", ";
       }
 
-      auto code_hash_boc_r = convert::to_bytes(account_state.code_hash);
-      auto code_hash_boc = code_hash_boc_r.is_ok() ? code_hash_boc_r.move_as_ok() : td::optional<std::string>{};
+      auto code_boc_r = convert::to_bytes(account_state.code);
+      auto code_boc = code_boc_r.is_ok() ? code_boc_r.move_as_ok() : td::optional<std::string>{};
 
-      auto data_hash_boc_r = convert::to_bytes(account_state.data_hash);
-      auto data_hash_boc = data_hash_boc_r.is_ok() ? data_hash_boc_r.move_as_ok() : td::optional<std::string>{};
+      auto data_boc_r = convert::to_bytes(account_state.data);
+      auto data_boc = data_boc_r.is_ok() ? data_boc_r.move_as_ok() : td::optional<std::string>{};
       
       query << "("
             << TO_SQL_STRING(td::base64_encode(account_state.hash.as_slice())) << ","
@@ -634,8 +634,8 @@ void InsertBatchMcSeqnos::insert_account_states(pqxx::work &transaction, const s
             << TO_SQL_OPTIONAL_STRING(account_state.frozen_hash) << ","
             << TO_SQL_OPTIONAL_STRING(account_state.code_hash) << ","
             << TO_SQL_OPTIONAL_STRING(account_state.data_hash) << ","
-            << TO_SQL_OPTIONAL_STRING(code_hash_boc) << ","
-            << TO_SQL_OPTIONAL_STRING(data_hash_boc)
+            << TO_SQL_OPTIONAL_STRING(code_boc) << ","
+            << TO_SQL_OPTIONAL_STRING(data_boc)
             << ")";
     }
   }
@@ -673,11 +673,11 @@ void InsertBatchMcSeqnos::insert_latest_account_states(pqxx::work &transaction, 
       query << ", ";
     }
 
-    auto code_hash_boc_r = convert::to_bytes(account_state.code_hash);
-    auto code_hash_boc = code_hash_boc_r.is_ok() ? code_hash_boc_r.move_as_ok() : td::optional<std::string>{};
+    auto code_boc_r = convert::to_bytes(account_state.code);
+    auto code_boc = code_boc_r.is_ok() ? code_boc_r.move_as_ok() : td::optional<std::string>{};
 
-    auto data_hash_boc_r = convert::to_bytes(account_state.data_hash);
-    auto data_hash_boc = data_hash_boc_r.is_ok() ? data_hash_boc_r.move_as_ok() : td::optional<std::string>{};
+    auto data_boc_r = convert::to_bytes(account_state.data);
+    auto data_boc = data_boc_r.is_ok() ? data_boc_r.move_as_ok() : td::optional<std::string>{};
 
     query << "("
           << TO_SQL_STRING(convert::to_raw_address(account_state.account)) << ","
@@ -688,7 +688,9 @@ void InsertBatchMcSeqnos::insert_latest_account_states(pqxx::work &transaction, 
           << TO_SQL_STRING(account_state.account_status) << ","
           << TO_SQL_OPTIONAL_STRING(account_state.frozen_hash) << ","
           << TO_SQL_OPTIONAL_STRING(account_state.code_hash) << ","
-          << TO_SQL_OPTIONAL_STRING(account_state.data_hash)
+          << TO_SQL_OPTIONAL_STRING(account_state.data_hash) << ","
+          << TO_SQL_OPTIONAL_STRING(code_boc) << ","
+          << TO_SQL_OPTIONAL_STRING(data_boc)
           << ")";
   }
   if (is_first) {
@@ -702,9 +704,9 @@ void InsertBatchMcSeqnos::insert_latest_account_states(pqxx::work &transaction, 
         << "account_status = EXCLUDED.account_status, "
         << "frozen_hash = EXCLUDED.frozen_hash, "
         << "code_hash = EXCLUDED.code_hash, "
-        << "data_hash = EXCLUDED.data_hash WHERE latest_account_states.last_trans_lt < EXCLUDED.last_trans_lt, "
-        << "code = EXCLUDED.code, ";
-        << "data = EXCLUDED.data WHERE latest_account_states.last_trans_lt < EXCLUDED.last_trans_lt";
+        << "data_hash = EXCLUDED.data_hash, "
+        << "code_boc = EXCLUDED.code_boc, "
+        << "data_boc = EXCLUDED.data_boc WHERE latest_account_states.last_trans_lt < EXCLUDED.last_trans_lt";
 
   // LOG(DEBUG) << "Running SQL query: " << query.str();
   transaction.exec0(query.str());
@@ -862,12 +864,6 @@ public:
                             "data_boc = EXCLUDED.data_boc "
                             "WHERE jetton_wallets.last_transaction_lt < EXCLUDED.last_transaction_lt;";
 
-      auto code_boc_r = convert::to_bytes(wallet_.code);
-      auto code_boc = code_boc_r.is_ok() ? code_boc_r.move_as_ok() : td::optional<std::string>{};
-
-      auto data_boc_r = convert::to_bytes(wallet_.data);
-      auto data_boc = data_boc_r.is_ok() ? data_boc_r.move_as_ok() : td::optional<std::string>{};
-
       txn.exec_params(query,
                       wallet_.balance,
                       wallet_.address,
@@ -876,8 +872,8 @@ public:
                       wallet_.last_transaction_lt,
                       td::base64_encode(wallet_.code_hash.as_slice()),
                       td::base64_encode(wallet_.data_hash.as_slice()),
-                      code_boc,
-                      data_boc);
+                      wallet_.code_boc,
+                      wallet_.data_boc);
 
       txn.commit();
       promise_.set_value(td::Unit());
@@ -1237,12 +1233,6 @@ public:
                           "ON CONFLICT (address) DO UPDATE "
                           "SET init = $2, index = $3, collection_address = $4, owner_address = $5, content = $6, last_transaction_lt = $7, code_hash = $8, data_hash = $9, code_boc = $10, data_boc = $11;";
 
-      auto code_boc_r = convert::to_bytes(item_data_.code);
-      auto code_boc = code_boc_r.is_ok() ? code_boc_r.move_as_ok() : td::optional<std::string>{};
-
-      auto data_boc_r = convert::to_bytes(item_data_.data);
-      auto data_boc = data_boc_r.is_ok() ? data_boc_r.move_as_ok() : td::optional<std::string>{};
-
       txn.exec_params(query,
                       item_data_.address,
                       item_data_.init,
@@ -1253,8 +1243,8 @@ public:
                       item_data_.last_transaction_lt,
                       td::base64_encode(item_data_.code_hash.as_slice().str()),
                       td::base64_encode(item_data_.data_hash.as_slice().str()),
-                      code_boc,
-                      data_boc);
+                      item_data_.code_boc,
+                      item_data_.data_boc);
 
       txn.commit();
       promise_.set_value(td::Unit());
